@@ -2,7 +2,6 @@ import re
 import smtplib
 import sqlite3
 from os.path import exists
-from getpass import getpass
 import email.utils
 import msvcrt
 
