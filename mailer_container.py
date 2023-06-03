@@ -41,8 +41,8 @@ with sqlite3.connect("mailer_container.db") as db:
 
         # Add the details to the table only if they are provided
         if name and surname and Email_Address:
-            db.execute("INSERT INTO emails (name, surname, Email_Address) VALUES (?, ?, ?)",
-                       (name, surname, Email_Address))
+            cursor.execute("INSERT INTO emails (name, surname, Email_Address) VALUES (?, ?, ?)",
+                           (name, surname, Email_Address))
             db.commit()
 
 # Closes the cursor and the database connection
