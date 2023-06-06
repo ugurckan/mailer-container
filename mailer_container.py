@@ -3,6 +3,7 @@ import smtplib
 import sqlite3
 from os.path import exists
 from getpass import getpass
+import email.utils
 import msvcrt
 
 # Checks if the database file already exists
@@ -41,13 +42,14 @@ with sqlite3.connect("mailer_container.db") as db:
 
         # Add the details to the table only if they are provided
         if name and surname and Email_Address:
-            db.execute("INSERT INTO emails (name, surname, Email_Address) VALUES (?, ?, ?)",
+            cursor.execute("INSERT INTO emails (name, surname, Email_Address) VALUES (?, ?, ?)",
                        (name, surname, Email_Address))
             db.commit()
 
 # Closes the cursor and the database connection
 cursor.close()
 db.close()
+
 
 # displays the asterisks instead of the password characters 
 def get_password(prompt="Password: "):
@@ -85,7 +87,8 @@ def valid_email(check):
 # users can generate a valid password up to the app and up to the device from: 
 # https://myaccount.google.com/apppasswords
 
-def login():
+
+def login(return_to_menu=False):
     print("\n            ___________________________________________\n")
     print("\n            ----- Welcome to Multiple Email Sender -----\n")
     print("            _________________  Login  _________________\n\n")
@@ -114,7 +117,7 @@ def login():
 
             while True:
                 try:
-                    if sender_email ==  "":
+                    if sender_email == "":
                         print("Please enter an email!")
                     elif sender_email[-11:] == "hotmail.com":
                         server = smtplib.SMTP("smtp-mail.outlook.com", 587)
@@ -133,10 +136,9 @@ def login():
                         continue
 
                     # Encrypts the traffic
-                    server.starttls()  
+                    server.starttls()
                     server.login(sender_email, password)
                     print("\n  Logged in successfully")
-
 
                     # Attempts to login using the provided email and password
                     server.login(sender_email, password)
@@ -147,15 +149,16 @@ def login():
                 except smtplib.SMTPException as e:
                     print("\n  An error occurred during login:", str(e))
                     continue
-                return main()
-            
+                return sender_email, password
+
         except KeyboardInterrupt:
             print("\n  Login process interrupted.")
 
-        main()
-
-        return sender_email, password
+        if return_to_menu:
+            return  # Return only if `return_to_menu` is True
         
+        return sender_email, password
+
 
 # Adds a new receiver to the database
 def add_new_email():
@@ -315,6 +318,7 @@ def search_receiver():
 
     return main()
 
+
 def content_editor():
     # Title - subject of the email will be written here
     subject = input("\nPlease enter a title: ")
@@ -330,21 +334,29 @@ def content_editor():
     email_menu()
 
     return message
-    
+
+
 # Creates a new database for email templates
 def template_database(content_editor):
     with sqlite3.connect("template_db.db") as db:
         cursor = db.cursor()
 
-        # Creates the templates table
+        # Create the templates table if it doesn't exist
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS templates (
+            CREATE TABLE IF NOT EXISTS email_templates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 subject TEXT,
                 body TEXT
             )
         """)
+        print("Templates table created successfully.")
+
     return content_editor
+
+
+# Calls the template_database function to ensure the table exists
+template_database(None)
+
 
 # Adds a new template to the database
 def add_template(subject, body):
@@ -352,29 +364,28 @@ def add_template(subject, body):
         cursor = db.cursor()
 
         # Inserts the template into the database
-        cursor.execute("INSERT INTO templates (subject, body) VALUES (?, ?)", (subject, body))
+        cursor.execute("INSERT INTO email_templates (subject, body) VALUES (?, ?)", (subject, body))
         db.commit()
 
         print("Email template is added successfully!\n")
+
 
 # Removes a receiver from the database
 def delete_template():
     with sqlite3.connect("template_db.db") as db:
         cursor = db.cursor()
 
-        list_all_receivers(return_to_menu=False)
-        # Requests the index number of the receiver to remove from the database
+        # Requests the ID number of the receiver to remove from the database
         delete_template_index = int(input("Please enter the index number of the receiver you would like to remove from the database: "))
-
-        cursor.execute("SELECT * FROM templates")
-        templates = cursor.fetchall()
+        cursor.execute("SELECT * FROM email_templates")
+        email_templates = cursor.fetchall()
 
         # Checks if the index is within the valid range
-        if 1 <= delete_template_index <= len(templates):
-            template_to_remove = templates[delete_template_index - 1][0]
+        if 1 <= delete_template_index <= len(email_templates):
+            template_to_remove = email_templates[delete_template_index - 1][0]
 
             # Deletes the data from the database
-            cursor.execute("DELETE FROM templates WHERE id = ?", (template_to_remove,))
+            cursor.execute("DELETE FROM email_templates WHERE id = ?", (template_to_remove,))
             db.commit()
             print(f"\n{template_to_remove} is removed from the database successfully!")
         else:
@@ -382,18 +393,19 @@ def delete_template():
 
     return main()
 
+
 # Displays all templates in the database
 def list_templates():
     with sqlite3.connect("template_db.db") as db:
         cursor = db.cursor()
 
         # Retrieves all templates from the database
-        cursor.execute("SELECT * FROM templates")
-        templates = cursor.fetchall()
+        cursor.execute("SELECT * FROM email_templates")
+        email_templates = cursor.fetchall()
 
         # Prints the templates
         print("\nEmail Templates:\n")
-        for template in templates:
+        for template in email_templates:
             template_id, subject, body = template
             print(f"Template ID: {template_id}")
             print(f"Subject: {subject}")
@@ -413,7 +425,9 @@ def email_menu():
         choice = input("\nPlease enter your choice: ")
 
         if choice == "1":
-            add_template()
+            subject = input("Please enter the email subject: ")
+            body = input("Enter the email body: ")
+            add_template(subject, body)
         elif choice == "2":
             delete_template() 
         elif choice == "3":
@@ -424,103 +438,104 @@ def email_menu():
             print("\nInvalid choice. Please try again.\n")
 
 
-# !!! this function needs to be reviewed !!!
-def send_email(sender_email, password):
+# Prompts the user to enter their e-mail account and sends the selected template to all recipients
+def send_email(sender_email, password, return_to_menu=False):
+
+    sender_email = str(sender_email)  # Convert to string
+
     with sqlite3.connect("mailer_container.db") as db:
         cursor = db.cursor()
+        cursor.execute("SELECT Email_Address FROM emails")
+        receivers = cursor.fetchall()
 
-        # Creates the templates table if it doesn't exist
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS templates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                subject TEXT,
-                body TEXT
-            )
-        """)
+        if not receivers:
+            print("\nNo receivers found in the database.\n")
+            return
+        
 
-        # Displays the list of templates
+    with sqlite3.connect("template_db.db") as template_db:
+        template_cursor = template_db.cursor()
+        template_cursor.execute("SELECT id, subject, body FROM email_templates")
+        templates = template_cursor.fetchall()
+
+        if templates is None:
+            print("\nNo templates found in the database.\n")
+            return
+
         list_templates()
 
         # Prompts the user to choose a template ID
-        template_id = int(input("Please enter the ID of the template you want to use: "))
+        template_id = input("\nPlease enter the index number of the template you want to use: ")
 
         try:
-            template_id = int(template_id)  # Convert the input to an integer
+            template_id = int(template_id)
         except ValueError:
-            print("\nInvalid template ID. Please enter a valid number.")
+            print("\nInvalid index number. Please enter a valid number.")
             return
 
         # Retrieves the chosen template from the database
-        cursor.execute("SELECT * FROM templates WHERE id = ?", (template_id,))
-        template = cursor.fetchone()
+        template_cursor.execute("SELECT subject, body FROM email_templates WHERE id = ?", (template_id,))
+        template = template_cursor.fetchone()
 
-        # Checks if the template exists
         if template is None:
-            print("\nInvalid template ID. Please try again.")
+            print("\nInvalid index number. Please try again.")
             return
-
-        # Extracts the subject and body from the template
-        template_id, subject, body = template
-
+        
+        subject, body = template
+        
+        
         # Composes the message using the template
         message = f"Subject: {subject}\n\n{body}"
+        message = message.encode('utf-8')  # Encode the message using UTF-8
+        
+    # Gets the list of receivers' email addresses
+    to_addrs = []
+    for email_address in receivers:
+        parsed_email = email.utils.parseaddr(email_address)[1]
+        if parsed_email:
+            to_addrs.append(parsed_email)
 
-        sender = sender_email
-        pswrd = password
+    if not to_addrs:
+        print("\nNo valid receiver email addresses found.")
+        return
 
-        # Declares the server variable with a default value
-        server = None
+    # Establishes a connection with the email server
+    try:
+        if sender_email.endswith("hotmail.com"):
+            server = smtplib.SMTP("smtp-mail.outlook.com", 587)
+        elif sender_email.endswith("gmail.com"):
+            server = smtplib.SMTP("smtp.gmail.com", 587)
+        elif sender_email.endswith("icloud.com"):
+            server = smtplib.SMTP("smtp.mail.me.com", 587)
+        elif sender_email.endswith("yahoo.com"):
+            server = smtplib.SMTP("smtp.mail.yahoo.com", 587)
+        else:
+            print("\nUnsupported email provider. Please use either Hotmail, Gmail, iCloud, or Yahoo.")
+            return
 
-        while True:
-            try:
-                if sender == "":
-                    print("Please enter an email!")
-                elif sender[-11:] == "hotmail.com":
-                    server = smtplib.SMTP("smtp-mail.outlook.com", 587)
-                elif sender[-9:] == "gmail.com":
-                    server = smtplib.SMTP("smtp.gmail.com", 587)
-                elif sender[-10:] == "icloud.com":
-                    server = smtplib.SMTP("smtp.mail.me.com", 587)
-                elif sender[-9:] == "yahoo.com":
-                    server = smtplib.SMTP("smtp.mail.yahoo.com", 587)
-                else:
-                    print("Please enter your email address from the email providers listed below:\n"
-                          "hotmail.com\n"
-                          "gmail.com\n"
-                          "icloud.com\n"
-                          "yahoo.com\n")
-                    continue
+        server.starttls()
+        server.login(sender_email, password)
 
-            except smtplib.SMTPAuthenticationError:
-                print("\n  Login failed! Please check your username and password!\n")
-                sender = str(input("  Please enter your email address: ")).lower()
-                pswrd = str(input("  Please enter your password: "))
-                continue
+        # Sends email to each receiver
+        for email_address in to_addrs:
+            server.sendmail(sender_email, email_address, message)
+            print(f"Email sent to {email_address}")
 
-            except smtplib.SMTPException as e:
-                print("\n  An error occurred during login:", str(e))
-                sender = str(input("  Please enter your email address: ")).lower()
-                pswrd = str(input("  Please enter your password: "))
-                continue
+        # Closes the server connection
+        server.quit()
 
-            server.starttls()
-            server.login(sender, pswrd)
+        print("\nEmails sent successfully!")
+    except smtplib.SMTPAuthenticationError:
+        print("\nLogin failed! Please check your username and password.")
+    except smtplib.SMTPException as e:
+        print("\nAn error occurred while sending emails:", str(e))
+            
+    if return_to_menu:
+        return  # Return only if `return_to_menu` is True
+    
+    main()
+    return sender_email, password
 
-            # Retrieves email addresses from the database
-            cursor.execute("SELECT Email_Address FROM emails")
-            email_addresses = cursor.fetchall()
-
-            # Sends email to each recipient
-            for index, (receiver_email,) in enumerate(email_addresses, start=1):
-                print(f"Sending email to receiver {index}: {receiver_email}")
-                server.sendmail(sender_email, receiver_email, message)
-
-            # Closes the server connection
-            server.quit()
-
-            print("Emails sent successfully!")
-
-            return sender_email, password
 
 # !!! this function needs to be reviewed !!!
 def container():
@@ -539,7 +554,8 @@ def container():
              # Creates a new container here using the container_name variable
             container_name = f"Container {container_number}"
             print(f"Existing: {container_name} ")
-           
+
+
 # Main menu
 def main():
     print("\n   _____________________________________________\n")
@@ -573,7 +589,10 @@ def main():
             if menu == int(6):
                 email_menu()
             if menu == int(7):
-                send_email(sender_email=login, password=login)
+                login_result = login()
+                sender_email = login_result[0]
+                password = login_result[1]
+                send_email(sender_email=sender_email, password=password)
             if menu == int(0):
                 print("\n   _____________________________________________\n")
                 print("   --Thank you for using Multiple Email Sender-- ")
@@ -590,4 +609,6 @@ def main():
             print("\n    Please enter the related number between 0 and 7!\n")
             continue
 
-login()
+
+# runs the main menu at the beginning
+main()
